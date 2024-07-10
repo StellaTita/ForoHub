@@ -1,0 +1,266 @@
+# Configuración de la base de datos
+spring.datasource.url=jdbc:postgresql://localhost:5432/foro
+spring.datasource.username=tu_usuario
+spring.datasource.password=tu_contraseña
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+
+# Configuración de JWT
+jwt.secret=mi_secreto
+jwt.expiration=86400000
+
+package com.example.foro;
+
+import javax.persistence.*;
+
+@Entity
+public class Usuario {
+    @Id 
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String nombre;
+    private String email;
+    private String contraseña;
+
+    // Getters y setters
+    // ...
+}
+
+
+package com.example.foro;
+
+import javax.persistence.*;
+
+@Entity
+public class Tópico {
+    @Id 
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String titulo;
+    private String mensaje;
+    private String curso;
+    
+    @ManyToOne
+    private Usuario usuario;
+
+    // Getters y setters
+    // ...
+}
+
+
+package com.example.foro;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.Optional;
+
+public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
+    Optional<Usuario> findByEmail(String email);
+}
+
+
+package com.example.foro;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface TópicoRepository extends JpaRepository<Tópico, Long> {
+}
+
+
+package com.example.foro;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.Date;
+
+@Component
+public class JwtUtil {
+    @Value("${jwt.secret}")
+    private String secret;
+
+    @Value("${jwt.expiration}")
+    private Long expiration;
+
+    public String generateToken(String email) {
+        return Jwts.builder()
+                .setSubject(email)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + expiration))
+                .signWith(SignatureAlgorithm.HS512, secret)
+                .compact();
+    }
+
+    public String getEmailFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        return claims.getSubject();
+    }
+
+    private Claims getClaimsFromToken(String token) {
+        return Jwts.parser()
+                .setSigningKey(secret)
+                .parseClaimsJws(token)
+                .getBody();
+    }
+
+    public boolean validateToken(String token) {
+        return getClaimsFromToken(token).getExpiration().after(new Date());
+    }
+}
+
+
+package com.example.foro;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.Date;
+
+@Component
+public class JwtUtil {
+    @Value("${jwt.secret}")
+    private String secret;
+
+    @Value("${jwt.expiration}")
+    private Long expiration;
+
+    public String generateToken(String email) {
+        return Jwts.builder()
+                .setSubject(email)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + expiration))
+                .signWith(SignatureAlgorithm.HS512, secret)
+                .compact();
+    }
+
+    public String getEmailFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        return claims.getSubject();
+    }
+
+    private Claims getClaimsFromToken(String token) {
+        return Jwts.parser()
+                .setSigningKey(secret)
+                .parseClaimsJws(token)
+                .getBody();
+    }
+
+    public boolean validateToken(String token) {
+        return getClaimsFromToken(token).getExpiration().after(new Date());
+    }
+}
+
+
+package com.example.foro;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface TópicoRepository extends JpaRepository<Tópico, Long> {
+}
+
+
+
+package com.example.foro;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+@Component
+public class JwtRequestFilter extends OncePerRequestFilter {
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private UserDetailsService userDetailsService;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+        final String authorizationHeader = request.getHeader("Authorization");
+
+        String email = null;
+        String jwt = null;
+
+        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+            jwt = authorizationHeader.substring(7);
+            email = jwtUtil.getEmailFromToken(jwt);
+        }
+
+        if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+
+            if (jwtUtil.validateToken(jwt)) {
+                UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                usernamePasswordAuthenticationToken
+                        .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
+            }
+        }
+        chain.doFilter(request, response);
+    }
+}
+
+
+package com.example.foro;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Autowired
+    private JwtRequestFilter jwtRequestFilter;
+
+    @Autowired
+    private UserDetailsService userDetailsService;
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+        auth.userDetailsService(userDetailsService).passwordEncoder(passwordEncoder());
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    @Override
+    public AuthenticationManager authenticationManagerBean() throws Exception {
+        return super.authenticationManagerBean();
+    }
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http.csrf().disable()
+                .authorizeRequests().ant
